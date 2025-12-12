@@ -12,6 +12,9 @@ async function startServer() {
     resolvers,
     introspection: true, // Включаем introspection для GraphQL Playground
     csrfPrevention: false, // Отключаем CSRF защиту для тестового сервера
+    resolverValidationOptions: {
+      requireResolversForResolvers: false, // Не требовать резолверы для всех типов
+    },
   });
 
   const { url } = await startStandaloneServer(server, {

@@ -10,6 +10,47 @@ const DateTime = {
   parseLiteral: (ast) => ast.value,
 };
 
+// Функция для создания резолверов для типов ресурсов
+function createResourceResolver(typeName) {
+  return {
+    id: (parent) => parent.id,
+    deletedAt: (parent) => parent.deletedAt || null,
+    erpResourceId: (parent) => parent.erpResourceId || null,
+    isPartOfComplexResource: (parent) =>
+      parent.isPartOfComplexResource ?? false,
+    malfunction: (parent) => parent.malfunction ?? false,
+    mobileIdent: (parent) => parent.mobileIdent || null,
+    mobilityType: (parent) => parent.mobilityType || "Mobile",
+    onlineStatus: (parent) => parent.onlineStatus || "OFFLINE",
+    productionSiteName: (parent) => parent.productionSiteName || null,
+    resourceNumber: (parent) => parent.resourceNumber || "",
+    resourceNumberType: (parent) => parent.resourceNumberType || "Garage",
+    subdivisionId: (parent) => parent.subdivisionId || "",
+    businessRoleNames: (parent) => {
+      const roles = parent.businessRoles || [];
+      return roles.map((role) => role?.name || "").filter((name) => name);
+    },
+    businessRoles: (parent) => {
+      if (parent.businessRoles) return parent.businessRoles;
+      if (parent.businessRoleIds && Array.isArray(parent.businessRoleIds)) {
+        return parent.businessRoleIds
+          .map((id) => db.businessRoles?.getById?.(id))
+          .filter((role) => role !== null && role !== undefined);
+      }
+      return [];
+    },
+    businessRolesToResource: (parent) => {
+      return [];
+    },
+    unavailability: (parent) => {
+      return [];
+    },
+    waybills: (parent) => {
+      return [];
+    },
+  };
+}
+
 export const resolvers = {
   DateTime,
 
@@ -36,7 +77,14 @@ export const resolvers = {
     resources: (parent, args) => {
       try {
         const filter = args.filter || {};
-        return db.resources.getByFilter(filter);
+        const employeeFilter = args.employeeFilter || null;
+        const resources = db.resources.getByFilter(filter);
+        // Обертываем ресурсы в ResourceItem, как требует реальная схема
+        return resources.map((resource) => ({
+          erpId: null,
+          resource: resource,
+          resourceType: resource.resourceType,
+        }));
       } catch (error) {
         console.error("Error in resources:", error);
         return [];
@@ -255,6 +303,8 @@ export const resolvers = {
       }
       return null;
     },
+    shortTitle: (parent) => parent.shortTitle || null,
+    resourceNumber: (parent) => parent.resourceNumber || "",
     validityPeriodFact: (parent) =>
       parent.validityPeriodFact || { from: null, to: null },
     validityPeriodPlan: (parent) =>
@@ -262,7 +312,7 @@ export const resolvers = {
   },
 
   Employee: {
-    id: (parent) => parent.id,
+    id: (parent) => parent.id || "unknown-employee-id",
     number: (parent) => parent.number || "",
     deletedAt: (parent) => parent.deletedAt || null,
     erpResourceId: (parent) => parent.erpResourceId || null,
@@ -337,9 +387,19 @@ export const resolvers = {
     position: (parent) => {
       if (parent.position) return parent.position;
       if (parent.positionId) {
-        return db.positions?.getById?.(parent.positionId) || null;
+        const position = db.positions?.getById?.(parent.positionId);
+        if (position) return position;
       }
-      return null;
+      // Возвращаем дефолтный объект Position, если поле обязательное
+      return {
+        id: "default-position",
+        code: "",
+        deletedAt: null,
+        integrationId: "",
+        name: null,
+        uniqueCode: "",
+        validityPeriod: { from: null, to: null },
+      };
     },
     previousShifts: (parent) => {
       // Возвращаем пустой массив для тестовой реализации
@@ -384,9 +444,18 @@ export const resolvers = {
     subdivision: (parent) => {
       if (parent.subdivision) return parent.subdivision;
       if (parent.subdivisionId) {
-        return db.subdivisions?.getById?.(parent.subdivisionId) || null;
+        const subdivision = db.subdivisions?.getById?.(parent.subdivisionId);
+        if (subdivision) return subdivision;
       }
-      return null;
+      // Возвращаем дефолтный объект Subdivision, если поле обязательное
+      return {
+        id: "default-subdivision",
+        hrmId: "",
+        integrationId: "",
+        name: "",
+        deletedAt: null,
+        validityPeriod: { from: null, to: null },
+      };
     },
     subdivisionTrip: (parent) => {
       if (parent.subdivisionTrip) return parent.subdivisionTrip;
@@ -483,14 +552,85 @@ export const resolvers = {
   },
 
   Resource: {
-    id: (parent) => parent.id,
-    name: (parent) => parent.name || null,
-    garageNumber: (parent) => parent.garageNumber || null,
-    resourceType: (parent) => parent.resourceType || null,
-    createdAt: (parent) => parent.createdAt || null,
-    updatedAt: (parent) => parent.updatedAt || null,
-    deletedAt: (parent) => parent.deletedAt || null,
+    __resolveType(obj) {
+      // Определяем тип на основе resourceType или __typename
+      if (obj.__typename) {
+        return obj.__typename;
+      }
+      if (obj.resourceType) {
+        // Маппинг ResourceType enum на типы
+        const typeMap = {
+          AirBridge: "AirBridge",
+          AirConditioner: "AirConditioner",
+          AirStartDevice: "AirStartDevice",
+          AircraftTug: "AircraftTug",
+          Ambulift: "Ambulift",
+          BaggageTractor: "BaggageTractor",
+          BeltLoader: "BeltLoader",
+          Car: "Car",
+          ContainerLoader: "ContainerLoader",
+          DeicingCar: "DeicingCar",
+          Extinguisher: "Extinguisher",
+          GPU: "GPU",
+          GasRefueller: "GasRefueller",
+          Heater: "Heater",
+          HeaterCar: "HeaterCar",
+          PaxBus: "PaxBus",
+          PaxStairs: "PaxStairs",
+          Stepladder: "Stepladder",
+          Towbar: "Towbar",
+          TowbarAdapter: "TowbarAdapter",
+          Tractor: "Tractor",
+          VacuumCleaner: "VacuumCleaner",
+          VacuumSweeper: "VacuumSweeper",
+          VipServiceCar: "VipServiceCar",
+          WasteDisposalMachine: "WasteDisposalMachine",
+          WaterCar: "WaterCar",
+        };
+        return typeMap[obj.resourceType] || "Car"; // По умолчанию Car
+      }
+      // Если это Employee (имеет firstName, lastName и т.д.)
+      if (obj.firstName || obj.lastName) {
+        return "Employee";
+      }
+      // По умолчанию возвращаем Car
+      return "Car";
+    },
   },
+
+  // Базовый резолвер для всех типов ресурсов через IResource
+  IResource: {
+    __resolveType(obj) {
+      return resolvers.Resource.__resolveType(obj);
+    },
+  },
+
+  // Резолверы для всех типов ресурсов (используют общую логику)
+  AirBridge: createResourceResolver("AirBridge"),
+  AirConditioner: createResourceResolver("AirConditioner"),
+  AirStartDevice: createResourceResolver("AirStartDevice"),
+  AircraftTug: createResourceResolver("AircraftTug"),
+  Ambulift: createResourceResolver("Ambulift"),
+  BaggageTractor: createResourceResolver("BaggageTractor"),
+  BeltLoader: createResourceResolver("BeltLoader"),
+  Car: createResourceResolver("Car"),
+  ContainerLoader: createResourceResolver("ContainerLoader"),
+  DeicingCar: createResourceResolver("DeicingCar"),
+  Extinguisher: createResourceResolver("Extinguisher"),
+  GPU: createResourceResolver("GPU"),
+  GasRefueller: createResourceResolver("GasRefueller"),
+  Heater: createResourceResolver("Heater"),
+  HeaterCar: createResourceResolver("HeaterCar"),
+  PaxBus: createResourceResolver("PaxBus"),
+  PaxStairs: createResourceResolver("PaxStairs"),
+  Stepladder: createResourceResolver("Stepladder"),
+  Towbar: createResourceResolver("Towbar"),
+  TowbarAdapter: createResourceResolver("TowbarAdapter"),
+  VacuumCleaner: createResourceResolver("VacuumCleaner"),
+  VacuumSweeper: createResourceResolver("VacuumSweeper"),
+  VipServiceCar: createResourceResolver("VipServiceCar"),
+  WasteDisposalMachine: createResourceResolver("WasteDisposalMachine"),
+  WaterCar: createResourceResolver("WaterCar"),
 
   OptionalDateTimePeriod: {
     from: (parent) => parent.from || null,
@@ -629,14 +769,21 @@ export const resolvers = {
   },
 
   ResourceGroupValidityPeriod: {
-    resourceGroup: (parent) => parent.resourceGroup,
-    validityPeriod: (parent) => {
-      return parent.validityPeriod || { from: null, to: null };
+    id: (parent) => parent.id,
+    period: (parent) => {
+      return parent.period || parent.validityPeriod || { from: null, to: null };
     },
+    resourceGroup: (parent) => parent.resourceGroup,
+    resources: (parent) => parent.resources || [],
+    summaryTask: (parent) => parent.summaryTask || null,
   },
 
   ShiftJournal: {
-    id: (parent) => parent.id,
+    arrivalDate: (parent) => parent.arrivalDate || null,
+    complexResources: (parent, args) => {
+      const filter = args.complexResourceFilter || {};
+      return db.complexResources.getByFilter(filter);
+    },
     currentShiftStatus: (parent) => {
       return parent.currentShiftStatus || "NOT_ON_SHIFT";
     },
@@ -653,13 +800,41 @@ export const resolvers = {
   },
 
   Skill: {
-    id: (parent) => parent.id,
-    name: (parent) => parent.name || null,
+    employee: (parent) => {
+      if (parent.employee) return parent.employee;
+      if (parent.employeeId) {
+        return db.employees.getById(parent.employeeId);
+      }
+      return null;
+    },
+    skillSpecification: (parent) => {
+      if (parent.skillSpecification) return parent.skillSpecification;
+      if (parent.skillSpecificationId) {
+        return (
+          db.skillSpecifications?.getById?.(parent.skillSpecificationId) || null
+        );
+      }
+      return null;
+    },
+    validFrom: (parent) => parent.validFrom || null,
+    validTo: (parent) => parent.validTo || null,
   },
 
   ResourceUnavailabilityPeriod: {
-    from: (parent) => parent.from,
-    to: (parent) => parent.to,
+    acceptedAt: (parent) => parent.acceptedAt || null,
+    comment: (parent) => parent.comment || null,
+    complexResourceId: (parent) => parent.complexResourceId || null,
+    createdBy: (parent) => parent.createdBy || "MANUAL",
+    deletedAt: (parent) => parent.deletedAt || null,
+    id: (parent) => parent.id,
+    publishedAt: (parent) => parent.publishedAt || null,
+    resourceType: (parent) => parent.resourceType || "Car",
+    status: (parent) => parent.status || null,
+    transitions: (parent) => parent.transitions || [],
+    type: (parent) => parent.type || "PRODUCTION",
+    unavailableFrom: (parent) => parent.unavailableFrom || parent.from || null,
+    unavailableTo: (parent) => parent.unavailableTo || parent.to || null,
+    wayBillNum: (parent) => parent.wayBillNum || null,
   },
 
   ServiceStandard: {
@@ -668,7 +843,8 @@ export const resolvers = {
   },
 
   FileRecord: {
-    id: (parent) => parent.id,
-    name: (parent) => parent.name || null,
+    id: (parent) => parent.id || null,
+    comment: (parent) => parent.comment || null,
+    fileExtension: (parent) => parent.fileExtension || null,
   },
 };
